@@ -248,3 +248,7 @@ parser.add_argument(
     "--disable_checkpoint", 
     action="store_true",
     help="Disable saving checkpoint.")
+parser.add_argument(
+    '--wandb',
+    action='store_true',
+    help='Whether to log to wandb')

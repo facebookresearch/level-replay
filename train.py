@@ -14,6 +14,7 @@ import logging
 
 import numpy as np
 import torch
+import wandb
 from baselines.logger import HumanOutputFormat
 
 from level_replay import algo, utils
@@ -51,9 +52,12 @@ def train(args, seeds):
     )
     stdout_logger = HumanOutputFormat(sys.stdout)
 
-    checkpointpath = os.path.expandvars(
-        os.path.expanduser("%s/%s/%s" % (log_dir, args.xpid, "model.tar"))
-    )
+    if args.wandb:
+        checkpointpath = os.path.join(wandb.run.dir, "model.pt")
+    else:
+        checkpointpath = os.path.expandvars(
+            os.path.expanduser("%s/%s/%s" % (log_dir, args.xpid, "model.tar"))
+        )
 
     # Configure actor envs
     start_level = 0
@@ -235,6 +239,8 @@ def train(args, seeds):
                 })
 
             plogger.log(stats)
+            if args.wandb:
+                wandb.log(stats)
             if args.verbose:
                 stdout_logger.writekvs(stats)
 
@@ -278,4 +284,8 @@ if __name__ == "__main__":
     else:
         train_seeds = generate_seeds(args.num_train_seeds)
 
-    train(args, train_seeds)
+    if args.wandb:
+        with wandb.init(project="minigrid-vin", entity="joshnroy", config=vars(args)):
+            train(args, train_seeds)
+    else:
+        train(args, train_seeds)
