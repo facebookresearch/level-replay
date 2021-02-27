@@ -30,3 +30,5 @@ rsync_exclude.txt
 wandb/
 
 tags
+
+run_all_grid.sh.*

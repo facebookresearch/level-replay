@@ -38,6 +38,7 @@ def train(args, seeds):
     device = torch.device("cuda:0" if args.cuda else "cpu")
     if 'cuda' in device.type:
         print('Using CUDA\n')
+    assert 'cuda' in device.type
 
     torch.set_num_threads(1)
 
