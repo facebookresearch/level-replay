@@ -11,6 +11,7 @@ import time
 from collections import deque
 import timeit
 import logging
+from tqdm import trange
 
 import numpy as np
 import torch
@@ -141,7 +142,7 @@ def train(args, seeds):
 
     timer = timeit.default_timer
     update_start_time = timer()
-    for j in range(num_updates):
+    for j in trange(num_updates):
         actor_critic.train()
         for step in range(args.num_steps):
             # Sample actions
