@@ -6,8 +6,11 @@
 # This is a day long job
 #$ -l day
 #
-# Usews 32GB memory
+# Uses 32GB memory
 #$ -l vf=32G
+#
+# Uses 32GB memory
+#$ -pe smp 8
 #
 # Uses 1 GPU
 #$ -l gpus=1
