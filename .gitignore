@@ -28,3 +28,5 @@ procgen/
 rsync_exclude.txt
 
 wandb/
+
+tags
