@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
 
 from level_replay.distributions import Categorical
 from level_replay.utils import init
@@ -52,7 +53,7 @@ def model_for_env_name(args, env):
     elif args.env_name.startswith('MiniGrid'):
         model = MinigridPolicy(
             env.observation_space.shape, env.action_space.n,
-            arch=args.arch)
+            arch=args.arch, vin=args.use_vin, num_iterations=args.vin_num_iterations)
     else:
         raise ValueError(f'Unsupported env {env}')
 
@@ -414,13 +415,17 @@ class MinigridPolicy(nn.Module):
     """
     Actor-Critic module 
     """
-    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None):
+    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10):
         super(MinigridPolicy, self).__init__()
+
+        self.vin = vin
+        self.num_iterations = num_iterations
         
         if base_kwargs is None:
             base_kwargs = {}
         
-        final_channels = 32 if arch == 'small' else 64
+        # final_channels = 32 if arch == 'small' else 64
+        final_channels = 1
 
         self.image_conv = nn.Sequential(
             nn.Conv2d(3, 16, (2, 2)),
@@ -433,8 +438,14 @@ class MinigridPolicy(nn.Module):
         )
         n = obs_shape[-2]
         m = obs_shape[-1]
+        self.image_embedding_shape = (final_channels, ((n-1)//2-2), ((m-1)//2-2))
         self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)*final_channels
         self.embedding_size = self.image_embedding_size
+
+        # Define VIN
+        self.r = nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
+        self.q = nn.Conv2d(in_channels=final_channels, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
+        self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
         # Define actor's model
         self.actor_base = nn.Sequential(
@@ -467,12 +478,22 @@ class MinigridPolicy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
+    def eval_q(self, r, v):
+        return F.conv2d(
+            torch.cat([r, v], 1),
+            torch.cat([self.q.weight, self.w], 1),
+            stride=1,
+            padding=1)
+
     def act(self, inputs, rnn_hxs, masks, deterministic=False):
         x = inputs
-        x = self.image_conv(x)
-        x = x.flatten(1, -1)
+        img_out = self.image_conv(x)
+        x = img_out.flatten(1, -1)
         actor_features = self.actor_base(x)
-        value = self.critic(x)
+
+        out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+        value_x = out_value_rep.flatten(1, -1)
+        value = self.critic(value_x)
         dist = self.dist(actor_features)
 
         if deterministic:
@@ -489,15 +510,31 @@ class MinigridPolicy(nn.Module):
     def get_value(self, inputs, rnn_hxs, masks):
         x = inputs
         x = self.image_conv(x)
+        x = self.get_value_vin(x, num_iterations=self.num_iterations)
         x = x.flatten(1, -1)
         return self.critic(x)
 
+    def get_value_vin(self, representation, num_iterations):
+        r = self.r(representation)
+        q = self.q(representation)
+        v, _ = torch.max(q, dim=1, keepdim=True)
+
+        for i in range(num_iterations - 1):
+            q = self.eval_q(r, v)
+            v, _ = torch.max(q, dim=1, keepdim=True)
+
+        return v
+
     def evaluate_actions(self, inputs, rnn_hxs, masks, action):
         x = inputs
-        x = self.image_conv(x)
-        x = x.flatten(1, -1)
+        img_out = self.image_conv(x)
+        x = img_out.flatten(1, -1)
         actor_features = self.actor_base(x)
-        value = self.critic(x)
+
+
+        out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+        value_x = out_value_rep.flatten(1, -1)
+        value = self.critic(value_x)
         dist = self.dist(actor_features)
 
         action_log_probs = dist.log_probs(action)
