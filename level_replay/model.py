@@ -443,7 +443,7 @@ class MinigridPolicy(nn.Module):
             self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)
             self.actor_embedding_size = self.image_embedding_size + self.image_embedding_size * final_channels
         else:
-            self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2) * final_classes
+            self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2) * final_channels
             self.actor_embedding_size = self.image_embedding_size
 
 
