@@ -424,8 +424,7 @@ class MinigridPolicy(nn.Module):
         if base_kwargs is None:
             base_kwargs = {}
         
-        # final_channels = 32 if arch == 'small' else 64
-        final_channels = 1
+        final_channels = 32 if arch == 'small' else 64
 
         self.image_conv = nn.Sequential(
             nn.Conv2d(3, 16, (2, 2)),
@@ -439,23 +438,39 @@ class MinigridPolicy(nn.Module):
         n = obs_shape[-2]
         m = obs_shape[-1]
         self.image_embedding_shape = (final_channels, ((n-1)//2-2), ((m-1)//2-2))
-        self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)*final_channels
-        self.embedding_size = self.image_embedding_size
+
+        if self.vin:
+            self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2)
+            self.actor_embedding_size = self.image_embedding_size + self.image_embedding_size * final_channels
+        else:
+            self.image_embedding_size = ((n-1)//2-2)*((m-1)//2-2) * final_classes
+            self.actor_embedding_size = self.image_embedding_size
+
 
         # Define VIN
-        self.r = nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
-        self.q = nn.Conv2d(in_channels=final_channels, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
-        self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
+        if self.vin:
+            self.h = nn.Sequential(
+                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(1, 1), stride=1, padding=0),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(1, 1), stride=1, padding=0),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(1, 1), stride=1, padding=0),
+                nn.ReLU(),
+            )
+
+            self.r = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=(1, 1), stride=1, padding=0)
+            self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
+            self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
         # Define actor's model
         self.actor_base = nn.Sequential(
-            init_tanh_(nn.Linear(self.embedding_size, 64)),
+            init_tanh_(nn.Linear(self.actor_embedding_size, 64)),
             nn.Tanh(),
         )
 
         # Define critic's model
         self.critic = nn.Sequential(
-            init_tanh_(nn.Linear(self.embedding_size, 64)),
+            init_tanh_(nn.Linear(self.image_embedding_size, 64)),
             nn.Tanh(),
             init_(nn.Linear(64, 1))
         )
@@ -478,23 +493,24 @@ class MinigridPolicy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def eval_q(self, r, v):
-        return F.conv2d(
-            torch.cat([r, v], 1),
-            torch.cat([self.q.weight, self.w], 1),
-            stride=1,
-            padding=1)
-
     def act(self, inputs, rnn_hxs, masks, deterministic=False):
         x = inputs
         img_out = self.image_conv(x)
         x = img_out.flatten(1, -1)
-        actor_features = self.actor_base(x)
 
-        out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
-        value_x = out_value_rep.flatten(1, -1)
-        value = self.critic(value_x)
+        if self.vin:
+            out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+            value_in = out_value_rep.flatten(1, -1)
+            actor_in = torch.cat([x, value_in.detach()], dim=1)
+        else:
+            value_in = x
+            actor_in = x
+
+        actor_features = self.actor_base(actor_in)
         dist = self.dist(actor_features)
+
+        value = self.critic(value_in)
+
 
         if deterministic:
             action = dist.mode()
@@ -510,13 +526,15 @@ class MinigridPolicy(nn.Module):
     def get_value(self, inputs, rnn_hxs, masks):
         x = inputs
         x = self.image_conv(x)
-        x = self.get_value_vin(x, num_iterations=self.num_iterations)
+        if self.vin:
+            x = self.get_value_vin(x, num_iterations=self.num_iterations)
         x = x.flatten(1, -1)
         return self.critic(x)
 
     def get_value_vin(self, representation, num_iterations):
-        r = self.r(representation)
-        q = self.q(representation)
+        h = self.h(representation)
+        r = self.r(h)
+        q = self.q(h)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
         for i in range(num_iterations - 1):
@@ -525,16 +543,31 @@ class MinigridPolicy(nn.Module):
 
         return v
 
+    def eval_q(self, r, v):
+        return F.conv2d(
+            torch.cat([r, v], 1),
+            torch.cat([self.q.weight, self.w], 1),
+            stride=1,
+            padding=1)
+
+
     def evaluate_actions(self, inputs, rnn_hxs, masks, action):
         x = inputs
         img_out = self.image_conv(x)
         x = img_out.flatten(1, -1)
-        actor_features = self.actor_base(x)
 
 
-        out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
-        value_x = out_value_rep.flatten(1, -1)
-        value = self.critic(value_x)
+        if self.vin:
+            out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+            value_in = out_value_rep.flatten(1, -1)
+            actor_in = torch.cat([x, value_in.detach()], dim=1)
+        else:
+            value_in = x
+            actor_in = x
+
+        value = self.critic(value_in)
+
+        actor_features = self.actor_base(actor_in)
         dist = self.dist(actor_features)
 
         action_log_probs = dist.log_probs(action)
