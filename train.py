@@ -12,6 +12,7 @@ from collections import deque
 import timeit
 import logging
 from tqdm import trange
+import glob
 
 import numpy as np
 import torch
@@ -288,6 +289,12 @@ if __name__ == "__main__":
 
     if args.wandb:
         with wandb.init(project="minigrid-vin", entity="joshnroy", config=vars(args)):
+            code = wandb.Artifact('project-source', type='code')
+            for path in glob.glob('**/*.py', recursive=True):
+                if 'wandb' not in path and '__init__' not in path:
+                    code.add_file(path)
+            wandb.run.log_artifact(code)
+
             train(args, train_seeds)
     else:
         train(args, train_seeds)
