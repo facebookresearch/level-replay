@@ -54,7 +54,7 @@ def model_for_env_name(args, env):
     elif args.env_name.startswith('MiniGrid'):
         model = MinigridPolicy(
             env.observation_space.shape, env.action_space.n,
-            arch=args.arch, vin=args.use_vin, num_iterations=args.vin_num_iterations, wandb=args.wandb)
+            arch=args.arch, vin=args.use_vin, num_iterations=args.vin_num_iterations, wandb=args.wandb, spatial_transformer=args.vin_spatial_transformer)
     else:
         raise ValueError(f'Unsupported env {env}')
 
@@ -416,12 +416,13 @@ class MinigridPolicy(nn.Module):
     """
     Actor-Critic module 
     """
-    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10, wandb=False):
+    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10, wandb=False, spatial_transformer=False):
         super(MinigridPolicy, self).__init__()
 
         self.vin = vin
         self.num_iterations = num_iterations
         self.wandb = wandb
+        self.spatial_transformer = spatial_transformer
 
         if self.wandb:
             self.image_log_freq = 1024
@@ -471,13 +472,37 @@ class MinigridPolicy(nn.Module):
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
 
-            self.critic_attention = nn.Sequential(
-                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), padding=1),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), padding=1),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(3, 3), padding=1),
-            )
+            if self.spatial_transformer:
+                self.localization = nn.Sequential(
+                    nn.Conv2d(final_channels, out_channels=8, kernel_size=7),
+                    nn.MaxPool2d(2, stride=2),
+                    nn.ReLU(True),
+                    nn.Conv2d(8, out_channels=10, kernel_size=5),
+                    nn.MaxPool2d(2, stride=2),
+                    nn.ReLU(True)
+                )
+
+                zeros_localized = self.localization(zeros_out)
+                self.localization_out_dim = zeros_localized.shape[2] * zeros_localized.shape[3] * zeros_localized.shape[1]
+
+                # Regressor for the 3 * 2 affine matrix
+                self.fc_loc = nn.Sequential(
+                    nn.Linear(self.localization_out_dim, 32),
+                    nn.ReLU(True),
+                    nn.Linear(32, 3 * 2)
+                )
+
+                # Initialize weights/bias with identity transform
+                self.fc_loc[2].weight.data.zero_()
+                self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+            else:
+                self.critic_attention = nn.Sequential(
+                    nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(3, 3), padding=1),
+                )
 
         # Define actor's model
         self.actor_base = nn.Sequential(
@@ -510,6 +535,17 @@ class MinigridPolicy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
+    def stn(self, obs, values):
+        xs = self.localization(obs)
+        xs = xs.reshape(-1, self.localization_out_dim)
+        theta = self.fc_loc(xs)
+        theta = theta.view(-1, 2, 3)
+
+        grid = F.affine_grid(theta, values.size())
+        values = F.grid_sample(values, grid)
+
+        return values
+
     def act(self, inputs, rnn_hxs, masks, deterministic=False):
         x = inputs
         img_out = self.image_conv(x)
@@ -518,13 +554,19 @@ class MinigridPolicy(nn.Module):
         if self.vin:
             out_value_rep, out_reward = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
-            critic_attention = self.critic_attention(img_out)
-            critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-            weighted_out_value_rep = out_value_rep * critic_attention
+            if self.spatial_transformer:
+                weighted_out_value_rep = self.stn(img_out, out_value_rep)
+            else:
+                critic_attention = self.critic_attention(img_out)
+                critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
+                weighted_out_value_rep = out_value_rep * critic_attention
 
             if self.wandb:
                 if self.image_log_i % self.image_log_freq == 0:
-                    wandb.log({"inputs": wandb.Image(inputs[0]), "critic_attention": wandb.Image(critic_attention[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
+                    if self.spatial_transformer:
+                        wandb.log({"inputs": wandb.Image(inputs[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
+                    else:
+                        wandb.log({"inputs": wandb.Image(inputs[0]), "critic_attention": wandb.Image(critic_attention[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
                 self.image_log_i += 1
 
             value_in = weighted_out_value_rep.flatten(1, -1)
@@ -556,9 +598,12 @@ class MinigridPolicy(nn.Module):
         if self.vin:
             x, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
-            critic_attention = self.critic_attention(img_out)
-            critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-            x *= critic_attention
+            if self.spatial_transformer:
+                x = self.stn(img_out, x)
+            else:
+                critic_attention = self.critic_attention(img_out)
+                critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
+                x *= critic_attention
         else:
             x = img_out
 
@@ -594,9 +639,12 @@ class MinigridPolicy(nn.Module):
         if self.vin:
             out_value_rep, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
-            critic_attention = self.critic_attention(img_out)
-            critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-            out_value_rep *= critic_attention
+            if self.spatial_transformer:
+                out_value_rep = self.stn(img_out, out_value_rep)
+            else:
+                critic_attention = self.critic_attention(img_out)
+                critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
+                out_value_rep *= critic_attention
 
             value_in = out_value_rep.flatten(1, -1)
             actor_in = torch.cat([x, value_in.detach()], dim=1)
