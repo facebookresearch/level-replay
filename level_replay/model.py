@@ -451,18 +451,18 @@ class MinigridPolicy(nn.Module):
             self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2]
             self.actor_embedding_size = self.image_embedding_size + self.image_embedding_size * final_channels
         else:
-            self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * self.image_embedding_shape[0]
+            self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * final_channels
             self.actor_embedding_size = self.image_embedding_size
 
 
         # Define VIN
         if self.vin:
             self.h = nn.Sequential(
-                # nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(1, 1), stride=1, padding=0),
-                # nn.ReLU(),
-                # nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(1, 1), stride=1, padding=0),
-                # nn.ReLU(),
-                nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(1, 1), stride=1, padding=0),
+                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=final_channels, out_channels=final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1),
                 nn.ReLU(),
             )
 
@@ -516,7 +516,7 @@ class MinigridPolicy(nn.Module):
         x = img_out.flatten(1, -1)
 
         if self.vin:
-            out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+            out_value_rep, out_reward = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
             critic_attention = self.critic_attention(img_out)
             critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
@@ -524,7 +524,7 @@ class MinigridPolicy(nn.Module):
 
             if self.wandb:
                 if self.image_log_i % self.image_log_freq == 0:
-                    wandb.log({"inputs": wandb.Image(inputs[0]), "critic_attention": wandb.Image(critic_attention[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0])})
+                    wandb.log({"inputs": wandb.Image(inputs[0]), "critic_attention": wandb.Image(critic_attention[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
                 self.image_log_i += 1
 
             value_in = weighted_out_value_rep.flatten(1, -1)
@@ -554,11 +554,13 @@ class MinigridPolicy(nn.Module):
         x = inputs
         img_out = self.image_conv(x)
         if self.vin:
-            x = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+            x, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
             critic_attention = self.critic_attention(img_out)
             critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
             x *= critic_attention
+        else:
+            x = img_out
 
         x = x.flatten(1, -1)
         return self.critic(x)
@@ -573,7 +575,7 @@ class MinigridPolicy(nn.Module):
             q = self.eval_q(r, v)
             v, _ = torch.max(q, dim=1, keepdim=True)
 
-        return v
+        return v, r
 
     def eval_q(self, r, v):
         return F.conv2d(
@@ -590,7 +592,7 @@ class MinigridPolicy(nn.Module):
 
 
         if self.vin:
-            out_value_rep = self.get_value_vin(img_out, num_iterations=self.num_iterations)
+            out_value_rep, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations)
 
             critic_attention = self.critic_attention(img_out)
             critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
