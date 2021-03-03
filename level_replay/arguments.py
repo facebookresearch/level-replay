@@ -252,3 +252,12 @@ parser.add_argument(
     '--wandb',
     action='store_true',
     help='Whether to log to wandb')
+parser.add_argument(
+    '--use_vin',
+    action='store_true',
+    help='Whether to use the value iteration network architecture')
+parser.add_argument(
+    '--vin_num_iterations', 
+    type=int, 
+    default=10, 
+    help='The number of iterations of value iteration to perform')
