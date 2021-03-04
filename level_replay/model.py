@@ -482,7 +482,8 @@ class MinigridPolicy(nn.Module):
                     nn.ReLU(True)
                 )
 
-                zeros_localized = self.localization(zeros_out)
+                # zeros_localized = self.localization(zeros_out)
+                zeros_localized = zeros_out
                 self.localization_out_dim = zeros_localized.shape[2] * zeros_localized.shape[3] * zeros_localized.shape[1]
 
                 # Regressor for the 3 * 2 affine matrix
@@ -535,8 +536,9 @@ class MinigridPolicy(nn.Module):
     def forward(self, inputs, rnn_hxs, masks):
         raise NotImplementedError
 
-    def stn(self, obs, values):
-        xs = self.localization(obs)
+    def stn(self, img_in, values):
+        # xs = self.localization(img_in)
+        xs = img_in
         xs = xs.reshape(-1, self.localization_out_dim)
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
