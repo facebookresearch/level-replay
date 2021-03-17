@@ -288,7 +288,7 @@ if __name__ == "__main__":
         train_seeds = generate_seeds(args.num_train_seeds)
 
     if args.wandb:
-        with wandb.init(project="minigrid-vin", entity="joshnroy", config=vars(args)):
+        with wandb.init(project="minigrid-vin", entity="joshnroy", config=vars(args), monitor_gym=True):
             code = wandb.Artifact('project-source', type='code')
             for path in glob.glob('**/*.py', recursive=True):
                 if 'wandb' not in path and '__init__' not in path:
