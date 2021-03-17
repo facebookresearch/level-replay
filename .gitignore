@@ -32,3 +32,4 @@ wandb/
 tags
 
 run_all_grid.sh.*
+slurm*
