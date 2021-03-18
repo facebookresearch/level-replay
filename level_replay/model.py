@@ -463,7 +463,10 @@ class MinigridPolicy(nn.Module):
             self.actor_embedding_size = self.image_embedding_size + self.image_embedding_size * self.final_channels
         elif self.vin and not self.spatial_transformer:
             self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2]
-            self.actor_embedding_size = 1 + self.image_embedding_size * self.final_channels
+            if True:
+                self.actor_embedding_size = num_actions + self.image_embedding_size * self.final_channels
+            else:
+                self.actor_embedding_size = 1 + self.image_embedding_size * self.final_channels
         else:
             self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * self.final_channels
             self.actor_embedding_size = self.image_embedding_size
@@ -575,7 +578,7 @@ class MinigridPolicy(nn.Module):
         x_actor = img_out_actor.flatten(1, -1)
 
         if self.vin:
-            out_value_rep, out_reward = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            out_value_rep, out_reward, out_q = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 weighted_out_value_rep = self.stn(img_out, out_value_rep)
@@ -594,9 +597,14 @@ class MinigridPolicy(nn.Module):
                 value_in = weighted_out_value_rep.flatten(1, -1)
 
                 value = value_in.sum(dim=1, keepdim=True)
-                assert value.shape[1] == 1
-                actor_in = torch.cat([x_actor, value.detach()], dim=1)
-                assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
+                q = out_q * critic_attention
+                q = q.sum(dim=[2, 3])
+                if True:
+                    actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                else:
+                    assert value.shape[1] == 1
+                    actor_in = torch.cat([x_actor, value.detach()], dim=1)
+                    assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
 
             if self.wandb:
                 if self.image_log_i % self.image_log_freq == 0:
@@ -636,7 +644,7 @@ class MinigridPolicy(nn.Module):
         x = inputs
         img_out = self.image_conv(x)
         if self.vin:
-            x, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            x, _, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 x = self.stn(img_out, x)
@@ -670,7 +678,7 @@ class MinigridPolicy(nn.Module):
             q = self.eval_q(r, v)
             v, _ = torch.max(q, dim=1, keepdim=True)
 
-        return v, r
+        return v, r, q
 
     def eval_q(self, r, v):
         return F.conv2d(
@@ -690,7 +698,7 @@ class MinigridPolicy(nn.Module):
 
 
         if self.vin:
-            out_value_rep, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            out_value_rep, _, out_q = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 out_value_rep = self.stn(img_out, out_value_rep)
@@ -707,9 +715,14 @@ class MinigridPolicy(nn.Module):
 
                 value_in = out_value_rep.flatten(1, -1)
                 value = value_in.sum(dim=1, keepdim=True)
-                assert value.shape[1] == 1
-                actor_in = torch.cat([x_actor, value.detach()], dim=1)
-                assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
+                q = out_q * critic_attention
+                q = q.sum(dim=[2, 3])
+                if True:
+                    actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                else:
+                    assert value.shape[1] == 1
+                    actor_in = torch.cat([x_actor, value.detach()], dim=1)
+                    assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
 
         else:
             value_in = x
