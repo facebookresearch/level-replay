@@ -669,9 +669,8 @@ class MinigridPolicy(nn.Module):
 
     def get_value_vin(self, representation, num_iterations, inputs):
         h = self.h(representation)
-        # r = self.r(h)
         r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
-        q = self.q(h)
+        q = self.q(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
         for i in range(num_iterations - 1):
