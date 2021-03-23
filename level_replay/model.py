@@ -443,26 +443,32 @@ class MinigridPolicy(nn.Module):
             nn.Conv2d(32, self.final_channels, (3, 3), padding=(1, 1)),
             nn.ReLU()
         )
-        # self.image_conv_actor = nn.Sequential(
-        #     nn.Conv2d(3, 16, (3, 3), padding=(1, 1)),
-        #     nn.ReLU(),
-        #     # nn.MaxPool2d((2, 2)),
-        #     nn.Conv2d(16, 32, (3, 3), padding=(1, 1)),
-        #     nn.ReLU(),
-        #     nn.Conv2d(32, self.final_channels, (3, 3), padding=(1, 1)),
-        #     nn.ReLU()
-        # )
+        self.image_conv_critic = nn.Sequential(
+            nn.Conv2d(3, 16, (3, 3), padding=(1, 1)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (3, 3), padding=(1, 1)),
+            nn.ReLU(),
+            nn.Conv2d(32, self.final_channels, (3, 3), padding=(1, 1)),
+            nn.ReLU()
+        )
+
         n = obs_shape[-2]
         m = obs_shape[-1]
+
         zeros_in = torch.zeros(obs_shape).unsqueeze(0)
         zeros_out = self.image_conv(zeros_in)
         self.image_embedding_shape = tuple(zeros_out.shape[1:])
+
+        zeros_in = torch.zeros(obs_shape).unsqueeze(0)
+        zeros_out = self.image_conv_critic(zeros_in)
+        self.critic_embedding_shape = tuple(zeros_out.shape[1:])
 
         if self.vin and self.spatial_transformer:
             self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2]
             self.actor_embedding_size = self.image_embedding_size + self.image_embedding_size * self.final_channels
         elif self.vin and not self.spatial_transformer:
-            self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2]
+            self.image_embedding_size = self.critic_embedding_shape[1] * self.critic_embedding_shape[2] * self.final_channels
             if True:
                 self.actor_embedding_size = num_actions# + self.image_embedding_size * self.final_channels
             else:
@@ -479,11 +485,11 @@ class MinigridPolicy(nn.Module):
                 # nn.ReLU(),
                 # nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
                 # nn.ReLU(),
-                nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=150, kernel_size=(3, 3), stride=1, padding=1),
                 # nn.ReLU(),
             )
 
-            self.r = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=(1, 1), stride=1, padding=0)
+            self.r = nn.Conv2d(in_channels=150, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
             self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
@@ -572,10 +578,11 @@ class MinigridPolicy(nn.Module):
     def act(self, inputs, rnn_hxs, masks, deterministic=False):
         x = inputs
         img_out = self.image_conv(x)
-        # img_out_actor = self.image_conv_actor(x)
+        img_out_critic = self.image_conv_critic(x)
         img_out_actor = img_out
         x = img_out.flatten(1, -1)
         x_actor = img_out_actor.flatten(1, -1)
+        x_critic = img_out_critic.flatten(1, -1)
 
         if self.vin:
             out_value_rep, out_reward, out_q = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
@@ -596,9 +603,10 @@ class MinigridPolicy(nn.Module):
                     critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
                 assert(out_value_rep.shape == critic_attention.shape)
                 weighted_out_value_rep = out_value_rep * critic_attention
-                value_in = weighted_out_value_rep.flatten(1, -1)
+                # value_in = weighted_out_value_rep.flatten(1, -1)
+                # value = value_in.sum(dim=1, keepdim=True)
+                value = self.critic(x_critic)
 
-                value = value_in.sum(dim=1, keepdim=True)
                 q = out_q * critic_attention
                 q = q.sum(dim=[2, 3])
                 if True:
@@ -631,8 +639,6 @@ class MinigridPolicy(nn.Module):
         actor_features = self.actor_base(actor_in)
         dist = self.dist(actor_features)
 
-
-
         if deterministic:
             action = dist.mode()
         else:
@@ -646,35 +652,37 @@ class MinigridPolicy(nn.Module):
 
     def get_value(self, inputs, rnn_hxs, masks):
         x = inputs
-        img_out = self.image_conv(x)
-        if self.vin:
-            x, _, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+        img_out = self.image_conv_critic(x)
+        #if self.vin:
+        #    x, _, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
-            if self.spatial_transformer:
-                x = self.stn(img_out, x)
-                x = x.flatten(1, -1)
-                out = self.critic(x)
-            else:
-                if True:
-                    critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
-                else:
-                    critic_attention = self.critic_attention(img_out)
-                    critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-                x *= critic_attention
-                x = x.flatten(1, -1)
-                out = x.sum(dim=1, keepdim=True)
-                assert out.shape[1] == 1
-        else:
-            x = img_out
-            x = x.flatten(1, -1)
-            out = self.critic(x)
+        #    if self.spatial_transformer:
+        #        x = self.stn(img_out, x)
+        #        x = x.flatten(1, -1)
+        #        out = self.critic(x)
+        #    else:
+        #        if True:
+        #            critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
+        #        else:
+        #            critic_attention = self.critic_attention(img_out)
+        #            critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
+        #        x *= critic_attention
+        #        x = x.flatten(1, -1)
+        #        out = x.sum(dim=1, keepdim=True)
+        #        assert out.shape[1] == 1
+        #else:
+        x = img_out
+        x = x.flatten(1, -1)
+        out = self.critic(x)
 
         return out
 
     def get_value_vin(self, representation, num_iterations, inputs):
         h = self.h(representation)
-        # r = self.r(h)
-        r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
+        if True:
+            r = self.r(h)
+        else:
+            r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
         q = self.q(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
@@ -695,10 +703,12 @@ class MinigridPolicy(nn.Module):
     def evaluate_actions(self, inputs, rnn_hxs, masks, action):
         x = inputs
         img_out = self.image_conv(x)
+        img_out_critic = self.image_conv_critic(x)
         # img_out_actor = self.image_conv_actor(x)
         img_out_actor = img_out
         x = img_out.flatten(1, -1)
         x_actor = img_out_actor.flatten(1, -1)
+        x_critic = img_out_critic.flatten(1, -1)
 
 
         if self.vin:
@@ -715,10 +725,11 @@ class MinigridPolicy(nn.Module):
                 else:
                     critic_attention = self.critic_attention(img_out)
                     critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-                out_value_rep *= critic_attention
+                # out_value_rep *= critic_attention
 
-                value_in = out_value_rep.flatten(1, -1)
-                value = value_in.sum(dim=1, keepdim=True)
+                # value_in = out_value_rep.flatten(1, -1)
+                # value = value_in.sum(dim=1, keepdim=True)
+                value = self.critic(x_critic)
                 q = out_q * critic_attention
                 q = q.sum(dim=[2, 3])
                 if True:
