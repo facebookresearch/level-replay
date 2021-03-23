@@ -464,7 +464,7 @@ class MinigridPolicy(nn.Module):
         elif self.vin and not self.spatial_transformer:
             self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2]
             if True:
-                self.actor_embedding_size = num_actions + self.image_embedding_size * self.final_channels
+                self.actor_embedding_size = num_actions# + self.image_embedding_size * self.final_channels
             else:
                 self.actor_embedding_size = 1 + self.image_embedding_size * self.final_channels
         else:
@@ -585,9 +585,11 @@ class MinigridPolicy(nn.Module):
 
                 value_in = weighted_out_value_rep.flatten(1, -1)
                 value = self.critic(value_in)
-                actor_in = torch.cat([x_actor, value_in.detach()], dim=1)
+                # actor_in = torch.cat([x_actor, value_in.detach()], dim=1)
+                # actor_in = q.detach()
+                actor_in = q
             else:
-                if False:
+                if True:
                     critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
                 else:
                     critic_attention = self.critic_attention(img_out)
@@ -600,7 +602,9 @@ class MinigridPolicy(nn.Module):
                 q = out_q * critic_attention
                 q = q.sum(dim=[2, 3])
                 if True:
-                    actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                    # actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                    # actor_in = q.detach()
+                    actor_in = q
                 else:
                     assert value.shape[1] == 1
                     actor_in = torch.cat([x_actor, value.detach()], dim=1)
@@ -651,7 +655,7 @@ class MinigridPolicy(nn.Module):
                 x = x.flatten(1, -1)
                 out = self.critic(x)
             else:
-                if False:
+                if True:
                     critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
                 else:
                     critic_attention = self.critic_attention(img_out)
@@ -669,8 +673,8 @@ class MinigridPolicy(nn.Module):
 
     def get_value_vin(self, representation, num_iterations, inputs):
         h = self.h(representation)
-        r = self.r(h)
-        # r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
+        # r = self.r(h)
+        r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
         q = self.q(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
@@ -706,7 +710,7 @@ class MinigridPolicy(nn.Module):
                 value = self.critic(value_in)
                 actor_in = torch.cat([x_actor, value_in.detach()], dim=1)
             else:
-                if False:
+                if True:
                     critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
                 else:
                     critic_attention = self.critic_attention(img_out)
@@ -718,7 +722,9 @@ class MinigridPolicy(nn.Module):
                 q = out_q * critic_attention
                 q = q.sum(dim=[2, 3])
                 if True:
-                    actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                    # actor_in = torch.cat([x_actor, q.detach()], dim=1)
+                    # actor_in = q.detach()
+                    actor_in = q
                 else:
                     assert value.shape[1] == 1
                     actor_in = torch.cat([x_actor, value.detach()], dim=1)
