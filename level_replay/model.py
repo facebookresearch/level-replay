@@ -474,19 +474,18 @@ class MinigridPolicy(nn.Module):
             else:
                 self.actor_embedding_size = 1 + self.image_embedding_size * self.final_channels
         else:
-            self.image_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * self.final_channels
-            self.actor_embedding_size = self.image_embedding_size
-
+            self.image_embedding_size = self.critic_embedding_shape[1] * self.critic_embedding_shape[2] * self.final_channels
+            self.actor_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * self.final_channels
 
         # Define VIN
         if self.vin:
             self.h = nn.Sequential(
-                # nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
-                # nn.ReLU(),
-                # nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
-                # nn.ReLU(),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.ReLU(),
                 nn.Conv2d(in_channels=self.final_channels, out_channels=150, kernel_size=(3, 3), stride=1, padding=1),
-                # nn.ReLU(),
+                nn.ReLU(),
             )
 
             self.r = nn.Conv2d(in_channels=150, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
@@ -632,7 +631,7 @@ class MinigridPolicy(nn.Module):
                 self.image_log_i += 1
 
         else:
-            value_in = x
+            value_in = x_critic
             actor_in = x_actor
             value = self.critic(value_in)
 
@@ -679,10 +678,11 @@ class MinigridPolicy(nn.Module):
 
     def get_value_vin(self, representation, num_iterations, inputs):
         h = self.h(representation)
-        if True:
+        if False:
             r = self.r(h)
         else:
             r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
+            r[(inputs[:, 0, :, :] == 2).unsqueeze(1)] = -0.5
         q = self.q(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
@@ -742,7 +742,7 @@ class MinigridPolicy(nn.Module):
                     assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
 
         else:
-            value_in = x
+            value_in = x_critic
             actor_in = x_actor
             value = self.critic(value_in)
 
