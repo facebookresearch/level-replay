@@ -490,6 +490,10 @@ class MinigridPolicy(nn.Module):
 
             self.r = nn.Conv2d(in_channels=150, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
             self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
+
+            self.p_condensor = nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
+            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1)
+
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
 
@@ -541,6 +545,24 @@ class MinigridPolicy(nn.Module):
 
         self.dist = Categorical(64, num_actions)
 
+# New VIN Bits
+        self.state_shape = self.image_embedding_shape[1:3]
+        self.half_kernel = self.p.weight.shape[2] // 2
+
+        rows = np.arange(self.state_shape[0])
+        cols = np.arange(self.state_shape[0])
+
+        self.trans_window_row_starts = np.maximum(rows - self.half_kernel, 0)
+        self.trans_window_row_ends = np.minimum(rows + self.half_kernel + 1, self.state_shape[0] - 1)
+        self.trans_window_col_starts = np.maximum(cols - self.half_kernel, 0)
+        self.trans_window_col_ends = np.minimum(cols + self.half_kernel + 1, self.state_shape[0] - 1)
+
+        self.rep_window_row_starts = np.maximum(self.trans_window_row_starts-rows, 0)
+        self.rep_window_row_ends = self.rep_window_row_starts + (self.trans_window_row_ends - self.trans_window_row_starts)
+        self.rep_window_col_starts = np.maximum(self.trans_window_col_starts-cols, 0)
+        self.rep_window_col_ends = self.rep_window_col_starts + (self.trans_window_col_ends - self.trans_window_col_starts)
+# End New VIN Bits
+
         apply_init_(self.modules())
 
         self.train()
@@ -584,7 +606,7 @@ class MinigridPolicy(nn.Module):
         x_critic = img_out_critic.flatten(1, -1)
 
         if self.vin:
-            out_value_rep, out_reward, out_q = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            out_value_rep, out_reward, out_q, transition_info = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 weighted_out_value_rep = self.stn(img_out, out_value_rep)
@@ -627,7 +649,8 @@ class MinigridPolicy(nn.Module):
                         out_value_rep_img = self.make_image(out_value_rep[0])
                         weighted_out_value_rep_img = self.make_image(weighted_out_value_rep[0])
                         out_reward_img = self.make_image(out_reward[0])
-                        wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img, "weighted_out_value_rep": weighted_out_value_rep_img, "reward": out_reward_img})
+                        transition_info_img = self.make_image(transition_info[0])
+                        wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img, "weighted_out_value_rep": weighted_out_value_rep_img, "reward": out_reward_img, 'transition_info': transition_info_img})
                 self.image_log_i += 1
 
         else:
@@ -682,22 +705,59 @@ class MinigridPolicy(nn.Module):
             r = self.r(h)
         else:
             r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
-            r[(inputs[:, 0, :, :] == 2).unsqueeze(1)] = -0.5
+            # r[(inputs[:, 0, :, :] == 2).unsqueeze(1)] = -0.5
         q = self.q(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
+        r_img = self.q(r)
+        transition_info = self.p_condensor(representation)
+
         for i in range(num_iterations - 1):
-            q = self.eval_q(r, v)
+            q = self.eval_q(r_img, v, transition_info)
             v, _ = torch.max(q, dim=1, keepdim=True)
 
-        return v, r, q
+        return v, r, q, transition_info
 
-    def eval_q(self, r, v):
-        return F.conv2d(
-            torch.cat([r, v], 1),
-            torch.cat([self.q.weight, self.w], 1),
-            stride=1,
-            padding=1)
+    def eval_q(self, r_img, v, transition_info):
+        # Get reward image
+        qt = torch.zeros_like(r_img)
+
+        # Get qt-image
+        for row in range(self.state_shape[0]):
+            for col in range(self.state_shape[1]):
+                rep_window = torch.zeros((transition_info.shape[0], transition_info.shape[1], self.p.weight.shape[2], self.p.weight.shape[3]), device='cuda:0')
+                v_window = torch.zeros((transition_info.shape[0], transition_info.shape[1], self.p.weight.shape[2], self.p.weight.shape[3]), device='cuda:0')
+
+                trans_window_row_start = self.trans_window_row_starts[row]
+                trans_window_row_end = self.trans_window_row_ends[row]
+                trans_window_col_start = self.trans_window_col_starts[col]
+                trans_window_col_end = self.trans_window_col_ends[col]
+
+                rep_window_row_start = self.rep_window_row_starts[row]
+                rep_window_row_end = self.rep_window_row_ends[row]
+                rep_window_col_start = self.rep_window_col_starts[col]
+                rep_window_col_end = self.rep_window_col_ends[col]
+
+                rep_window[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] = transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
+
+                p_weight_unsqueezed = self.p.weight[:, 0, :, :].unsqueeze(0)
+                transition_window = p_weight_unsqueezed * rep_window
+
+                v_window[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] = v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
+                qt_window = transition_window * v_window
+                qt_element = qt_window.sum([2, 3])
+                qt[:, :, row, col] = qt_element
+
+        # Sum q-transition and reward image
+        q = r_img + qt
+
+        return q
+
+        # return F.conv2d(
+        #     torch.cat([r, v], 1),
+        #     torch.cat([self.q.weight, self.w], 1),
+        #     stride=1,
+        #     padding=1)
 
 
     def evaluate_actions(self, inputs, rnn_hxs, masks, action):
@@ -712,7 +772,7 @@ class MinigridPolicy(nn.Module):
 
 
         if self.vin:
-            out_value_rep, _, out_q = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            out_value_rep, _, out_q, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 out_value_rep = self.stn(img_out, out_value_rep)
