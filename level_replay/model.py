@@ -742,6 +742,7 @@ class MinigridPolicy(nn.Module):
 
                 p_weight_unsqueezed = self.p.weight[:, 0, :, :].unsqueeze(0)
                 transition_window = p_weight_unsqueezed * rep_window
+                transition_window = F.softmax(transition_window.view(transition_window.shape[0], transition_window.shape[1], -1), dim=2).view_as(transition_window)
 
                 v_window[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] = v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
                 qt_window = transition_window * v_window
