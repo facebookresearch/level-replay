@@ -16,6 +16,7 @@ import torch.nn.functional as F
 import sys
 import wandb
 import plotly.express as px
+import torch.autograd.profiler as profiler
 
 from level_replay.distributions import Categorical
 from level_replay.utils import init
@@ -492,7 +493,7 @@ class MinigridPolicy(nn.Module):
             self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
 
             self.p_condensor = nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
-            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1)
+            self.p = nn.parameter.Parameter(torch.zeros(1, num_actions, 3, 3), requires_grad=True)
 
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
@@ -547,7 +548,7 @@ class MinigridPolicy(nn.Module):
 
 # New VIN Bits
         self.state_shape = self.image_embedding_shape[1:3]
-        self.half_kernel = self.p.weight.shape[2] // 2
+        self.half_kernel = self.p.shape[2] // 2
 
         rows = np.arange(self.state_shape[0])
         cols = np.arange(self.state_shape[0])
@@ -711,23 +712,31 @@ class MinigridPolicy(nn.Module):
 
         r_img = self.q(r)
         transition_info = self.p_condensor(representation)
+        qt = torch.empty_like(r_img)
 
-        for i in range(num_iterations - 1):
-            q = self.eval_q(r_img, v, transition_info)
-            v, _ = torch.max(q, dim=1, keepdim=True)
+        if False:
+            print("AAAAAAAAAAAAAA")
+            with profiler.profile(record_shapes=True, profile_memory=True, use_cuda=True) as prof:
+                with profiler.record_function("agent update"):
+                    for i in range(num_iterations - 1):
+                        q = self.eval_q(r_img, v, transition_info, qt)
+                        v, _ = torch.max(q, dim=1, keepdim=True)
+            print(prof.key_averages().table(sort_by='cuda_memory_usage'))
+            assert False
+        else:
+            for i in range(num_iterations - 1):
+                q = self.eval_q(r_img, v, transition_info, qt)
+                v, _ = torch.max(q, dim=1, keepdim=True)
 
         return v, r, q, transition_info
 
-    def eval_q(self, r_img, v, transition_info):
+    def eval_q(self, r_img, v, transition_info, qt):
         # Get reward image
-        qt = torch.zeros_like(r_img)
+        # qt = torch.empty_like(r_img)
 
         # Get qt-image
         for row in range(self.state_shape[0]):
             for col in range(self.state_shape[1]):
-                rep_window = torch.zeros((transition_info.shape[0], transition_info.shape[1], self.p.weight.shape[2], self.p.weight.shape[3]), device='cuda:0')
-                v_window = torch.zeros((transition_info.shape[0], transition_info.shape[1], self.p.weight.shape[2], self.p.weight.shape[3]), device='cuda:0')
-
                 trans_window_row_start = self.trans_window_row_starts[row]
                 trans_window_row_end = self.trans_window_row_ends[row]
                 trans_window_col_start = self.trans_window_col_starts[col]
@@ -738,16 +747,9 @@ class MinigridPolicy(nn.Module):
                 rep_window_col_start = self.rep_window_col_starts[col]
                 rep_window_col_end = self.rep_window_col_ends[col]
 
-                rep_window[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] = transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
-
-                p_weight_unsqueezed = self.p.weight[:, 0, :, :].unsqueeze(0)
-                transition_window = p_weight_unsqueezed * rep_window
+                transition_window = self.p[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] * transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
                 transition_window = F.softmax(transition_window.view(transition_window.shape[0], transition_window.shape[1], -1), dim=2).view_as(transition_window)
-
-                v_window[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] = v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
-                qt_window = transition_window * v_window
-                qt_element = qt_window.sum([2, 3])
-                qt[:, :, row, col] = qt_element
+                qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
 
         # Sum q-transition and reward image
         q = r_img + qt

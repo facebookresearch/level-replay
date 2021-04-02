@@ -18,6 +18,7 @@ import numpy as np
 import torch
 import wandb
 from baselines.logger import HumanOutputFormat
+import torch.autograd.profiler as profiler
 
 from level_replay import algo, utils
 from level_replay.model import model_for_env_name
@@ -189,7 +190,15 @@ def train(args, seeds):
         if level_sampler:
             level_sampler.update_with_rollouts(rollouts)
 
-        value_loss, action_loss, dist_entropy = agent.update(rollouts)
+        if False:
+            print("AAAAAAAAAAAAAA")
+            with profiler.profile(record_shapes=True, profile_memory=True, use_cuda=True) as prof:
+                with profiler.record_function("agent update"):
+                    value_loss, action_loss, dist_entropy = agent.update(rollouts)
+            print(prof.key_averages().table(sort_by='cuda_memory_usage'))
+            assert False
+        else:
+            value_loss, action_loss, dist_entropy = agent.update(rollouts)
         rollouts.after_update()
         if level_sampler:
             level_sampler.after_update()
