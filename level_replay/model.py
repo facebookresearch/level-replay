@@ -493,7 +493,8 @@ class MinigridPolicy(nn.Module):
             self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
 
             self.p_condensor = nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
-            self.p = nn.parameter.Parameter(torch.zeros(1, num_actions, 3, 3), requires_grad=True)
+            # self.p = nn.parameter.Parameter(torch.zeros(1, num_actions, 3, 3), requires_grad=True)
+            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1)
 
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
@@ -548,7 +549,7 @@ class MinigridPolicy(nn.Module):
 
 # New VIN Bits
         self.state_shape = self.image_embedding_shape[1:3]
-        self.half_kernel = self.p.shape[2] // 2
+        self.half_kernel = self.p.weight.shape[2] // 2
 
         rows = np.arange(self.state_shape[0])
         cols = np.arange(self.state_shape[0])
@@ -735,21 +736,26 @@ class MinigridPolicy(nn.Module):
         # qt = torch.empty_like(r_img)
 
         # Get qt-image
-        for row in range(self.state_shape[0]):
-            for col in range(self.state_shape[1]):
-                trans_window_row_start = self.trans_window_row_starts[row]
-                trans_window_row_end = self.trans_window_row_ends[row]
-                trans_window_col_start = self.trans_window_col_starts[col]
-                trans_window_col_end = self.trans_window_col_ends[col]
+        # for row in range(self.state_shape[0]):
+        #     for col in range(self.state_shape[1]):
+        #         trans_window_row_start = self.trans_window_row_starts[row]
+        #         trans_window_row_end = self.trans_window_row_ends[row]
+        #         trans_window_col_start = self.trans_window_col_starts[col]
+        #         trans_window_col_end = self.trans_window_col_ends[col]
 
-                rep_window_row_start = self.rep_window_row_starts[row]
-                rep_window_row_end = self.rep_window_row_ends[row]
-                rep_window_col_start = self.rep_window_col_starts[col]
-                rep_window_col_end = self.rep_window_col_ends[col]
+        #         rep_window_row_start = self.rep_window_row_starts[row]
+        #         rep_window_row_end = self.rep_window_row_ends[row]
+        #         rep_window_col_start = self.rep_window_col_starts[col]
+        #         rep_window_col_end = self.rep_window_col_ends[col]
 
-                transition_window = self.p[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] * transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
-                transition_window = F.softmax(transition_window.view(transition_window.shape[0], transition_window.shape[1], -1), dim=2).view_as(transition_window)
-                qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
+        #         print(self.p.shape, transition_info.shape)
+        #         assert False
+        #         transition_window = self.p[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] * transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
+        #         transition_window = F.softmax(transition_window.view(transition_window.shape[0], transition_window.shape[1], -1), dim=2).view_as(transition_window)
+
+        #         qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
+        assert (v * transition_info).shape == v.shape == transition_info.shape
+        qt = self.p(v * transition_info)
 
         # Sum q-transition and reward image
         q = r_img + qt
