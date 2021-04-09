@@ -56,7 +56,7 @@ def model_for_env_name(args, env):
     elif args.env_name.startswith('MiniGrid'):
         model = MinigridPolicy(
             env.observation_space.shape, env.action_space.n,
-            arch=args.arch, vin=args.use_vin, num_iterations=args.vin_num_iterations, wandb=args.wandb, spatial_transformer=args.vin_spatial_transformer)
+            arch=args.arch, vin=args.use_vin, num_iterations=args.vin_num_iterations, wandb=args.wandb, spatial_transformer=args.vin_spatial_transformer, dynamics=args.use_dynamics, sigmoid=args.sigmoid_dynamics)
     else:
         raise ValueError(f'Unsupported env {env}')
 
@@ -418,13 +418,15 @@ class MinigridPolicy(nn.Module):
     """
     Actor-Critic module 
     """
-    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10, wandb=False, spatial_transformer=False):
+    def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10, wandb=False, spatial_transformer=False, sigmoid=False, dynamics=False):
         super(MinigridPolicy, self).__init__()
 
         self.vin = vin
         self.num_iterations = num_iterations
         self.wandb = wandb
         self.spatial_transformer = spatial_transformer
+        self.sigmoid = sigmoid
+        self.dynamics = dynamics
 
         if self.wandb:
             self.image_log_freq = 1024
@@ -681,6 +683,8 @@ class MinigridPolicy(nn.Module):
 
         r_img = self.q(r)
         transition_info = self.p_condensor(representation)
+        if self.sigmoid:
+            transition_info = torch.sigmoid(transition_info)
         qt = torch.empty_like(r_img)
 
         if False:
@@ -723,7 +727,10 @@ class MinigridPolicy(nn.Module):
 
         #         qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
         assert (v * transition_info).shape == v.shape == transition_info.shape
-        qt = self.p(v)
+        if self.dynamics:
+            qt = self.p(v * transition_info)
+        else:
+            qt = self.p(v)
 
         # Sum q-transition and reward image
         q = r_img + qt

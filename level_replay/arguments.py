@@ -269,3 +269,11 @@ parser.add_argument(
     '--actor_specific_encoder',
     action='store_true',
     help='Whether to use decoupled encoders for the actor and value policies')
+parser.add_argument(
+    '--use_dynamics',
+    action='store_true',
+    help='Whether to use the transition_info')
+parser.add_argument(
+    '--sigmoid_dynamics',
+    action='store_true',
+    help='Whether to use the sigmoid(transition_info)')
