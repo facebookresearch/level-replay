@@ -18,7 +18,7 @@ import wandb
 import plotly.express as px
 import torch.autograd.profiler as profiler
 
-from level_replay.distributions import Categorical
+from level_replay.distributions import Categorical, FixedCategorical
 from level_replay.utils import init
 from level_replay.envs import PROCGEN_ENVS
 
@@ -494,7 +494,7 @@ class MinigridPolicy(nn.Module):
 
             self.p_condensor = nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
             # self.p = nn.parameter.Parameter(torch.zeros(1, num_actions, 3, 3), requires_grad=True)
-            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1)
+            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
 
             self.w = nn.parameter.Parameter(torch.zeros(num_actions, 1, 3, 3), requires_grad=True)
 
@@ -546,24 +546,6 @@ class MinigridPolicy(nn.Module):
         )
 
         self.dist = Categorical(64, num_actions)
-
-# New VIN Bits
-        self.state_shape = self.image_embedding_shape[1:3]
-        self.half_kernel = self.p.weight.shape[2] // 2
-
-        rows = np.arange(self.state_shape[0])
-        cols = np.arange(self.state_shape[0])
-
-        self.trans_window_row_starts = np.maximum(rows - self.half_kernel, 0)
-        self.trans_window_row_ends = np.minimum(rows + self.half_kernel + 1, self.state_shape[0] - 1)
-        self.trans_window_col_starts = np.maximum(cols - self.half_kernel, 0)
-        self.trans_window_col_ends = np.minimum(cols + self.half_kernel + 1, self.state_shape[0] - 1)
-
-        self.rep_window_row_starts = np.maximum(self.trans_window_row_starts-rows, 0)
-        self.rep_window_row_ends = self.rep_window_row_starts + (self.trans_window_row_ends - self.trans_window_row_starts)
-        self.rep_window_col_starts = np.maximum(self.trans_window_col_starts-cols, 0)
-        self.rep_window_col_ends = self.rep_window_col_starts + (self.trans_window_col_ends - self.trans_window_col_starts)
-# End New VIN Bits
 
         apply_init_(self.modules())
 
@@ -636,32 +618,18 @@ class MinigridPolicy(nn.Module):
                     # actor_in = torch.cat([x_actor, q.detach()], dim=1)
                     # actor_in = q.detach()
                     actor_in = q
+                    dist = FixedCategorical(logits=actor_in)
                 else:
                     assert value.shape[1] == 1
                     actor_in = torch.cat([x_actor, value.detach()], dim=1)
                     assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
 
-            if self.wandb:
-                if self.image_log_i % self.image_log_freq == 0:
-                    if self.spatial_transformer:
-                        wandb.log({"inputs": wandb.Image(inputs[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
-                    else:
-                        inputs_img = wandb.Image(inputs[0])
-                        critic_attention_img = self.make_image(critic_attention[0])
-                        out_value_rep_img = self.make_image(out_value_rep[0])
-                        weighted_out_value_rep_img = self.make_image(weighted_out_value_rep[0])
-                        out_reward_img = self.make_image(out_reward[0])
-                        transition_info_img = self.make_image(transition_info[0])
-                        wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img, "weighted_out_value_rep": weighted_out_value_rep_img, "reward": out_reward_img, 'transition_info': transition_info_img})
-                self.image_log_i += 1
-
         else:
             value_in = x_critic
             actor_in = x_actor
             value = self.critic(value_in)
-
-        actor_features = self.actor_base(actor_in)
-        dist = self.dist(actor_features)
+            actor_features = self.actor_base(actor_in)
+            dist = self.dist(actor_features)
 
         if deterministic:
             action = dist.mode()
@@ -755,7 +723,7 @@ class MinigridPolicy(nn.Module):
 
         #         qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
         assert (v * transition_info).shape == v.shape == transition_info.shape
-        qt = self.p(v * transition_info)
+        qt = self.p(v)
 
         # Sum q-transition and reward image
         q = r_img + qt
@@ -781,7 +749,7 @@ class MinigridPolicy(nn.Module):
 
 
         if self.vin:
-            out_value_rep, _, out_q, _ = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
+            out_value_rep, out_reward, out_q, transition_info = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
 
             if self.spatial_transformer:
                 out_value_rep = self.stn(img_out, out_value_rep)
@@ -805,18 +773,33 @@ class MinigridPolicy(nn.Module):
                     # actor_in = torch.cat([x_actor, q.detach()], dim=1)
                     # actor_in = q.detach()
                     actor_in = q
+                    dist = FixedCategorical(logits=actor_in)
                 else:
                     assert value.shape[1] == 1
                     actor_in = torch.cat([x_actor, value.detach()], dim=1)
                     assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
+
+            if self.wandb:
+                if self.image_log_i % self.image_log_freq == 0:
+                    if self.spatial_transformer:
+                        wandb.log({"inputs": wandb.Image(inputs[0]), "out_value_rep": wandb.Image(out_value_rep[0]), "weighted_out_value_rep": wandb.Image(weighted_out_value_rep[0]), "r": wandb.Image(out_reward[0])})
+                    else:
+                        inputs_img = wandb.Image(inputs[0])
+                        critic_attention_img = self.make_image(critic_attention[0])
+                        out_value_rep_img = self.make_image(out_value_rep[0])
+                        out_reward_img = self.make_image(out_reward[0])
+                        transition_info_img = self.make_image(transition_info[0])
+                        p_img = px.imshow(self.p.weight[0, 0, :, :].detach().cpu().numpy())
+                        wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img, "reward": out_reward_img, 'transition_info': transition_info_img, "self.p": p_img})
+                self.image_log_i += 1
 
         else:
             value_in = x_critic
             actor_in = x_actor
             value = self.critic(value_in)
 
-        actor_features = self.actor_base(actor_in)
-        dist = self.dist(actor_features)
+            actor_features = self.actor_base(actor_in)
+            dist = self.dist(actor_features)
 
         action_log_probs = dist.log_probs(action)
         dist_entropy = dist.entropy().mean()
