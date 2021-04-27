@@ -262,10 +262,6 @@ parser.add_argument(
     default=10, 
     help='The number of iterations of value iteration to perform')
 parser.add_argument(
-    '--vin_spatial_transformer',
-    action='store_true',
-    help='Whether to use a spatial transformer network as the attention model. If false, it uses cnn attention')
-parser.add_argument(
     '--actor_specific_encoder',
     action='store_true',
     help='Whether to use decoupled encoders for the actor and value policies')
