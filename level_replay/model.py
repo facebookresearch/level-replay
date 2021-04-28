@@ -465,7 +465,7 @@ class MinigridPolicy(nn.Module):
         zeros_out = self.image_conv_critic(zeros_in)
         self.critic_embedding_shape = tuple(zeros_out.shape[1:])
 
-        self.vin:
+        if self.vin:
             self.image_embedding_size = self.critic_embedding_shape[1] * self.critic_embedding_shape[2] * self.final_channels
             if True:
                 self.actor_embedding_size = num_actions
