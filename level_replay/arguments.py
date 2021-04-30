@@ -152,7 +152,7 @@ parser.add_argument(
 parser.add_argument(
     "--final_num_test_seeds", 
     type=int,
-    default=1000,
+    default=10,
     help="Number of test seeds")
 parser.add_argument(
     '--seed_path',

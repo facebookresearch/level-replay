@@ -1,5 +1,5 @@
 # Copyright (c) 2017 Ilya Kostrikov
-# 
+#
 # Licensed under the MIT License;
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -17,20 +17,24 @@ import sys
 import wandb
 import plotly.express as px
 import torch.autograd.profiler as profiler
+from typing import Tuple
 
 from level_replay.distributions import Categorical, FixedCategorical
 from level_replay.utils import init
 from level_replay.envs import PROCGEN_ENVS
 
 
-init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
-                        constant_(x, 0))
+def init_(m): return init(m, nn.init.orthogonal_, lambda x: nn.init.
+                          constant_(x, 0))
 
-init_relu_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
-                        constant_(x, 0), nn.init.calculate_gain('relu'))
 
-init_tanh_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
-                        constant_(x, 0), np.sqrt(2))
+def init_relu_(m): return init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), nn.init.calculate_gain('relu'))
+
+
+def init_tanh_(m): return init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), np.sqrt(2))
+
 
 def apply_init_(modules):
     """
@@ -67,6 +71,7 @@ class Flatten(nn.Module):
     """
     Flatten a tensor
     """
+
     def forward(self, x):
         return x.reshape(x.size(0), -1)
 
@@ -75,6 +80,7 @@ class Conv2d_tf(nn.Conv2d):
     """
     Conv2d with the padding behavior from TF
     """
+
     def __init__(self, *args, **kwargs):
         super(Conv2d_tf, self).__init__(*args, **kwargs)
         self.padding = kwargs.get("padding", "SAME")
@@ -85,7 +91,8 @@ class Conv2d_tf(nn.Conv2d):
         effective_filter_size = (filter_size - 1) * self.dilation[dim] + 1
         out_size = (input_size + self.stride[dim] - 1) // self.stride[dim]
         total_padding = max(
-            0, (out_size - 1) * self.stride[dim] + effective_filter_size - input_size
+            0, (out_size - 1) * self.stride[dim] +
+            effective_filter_size - input_size
         )
         additional_padding = int(total_padding % 2 != 0)
 
@@ -122,12 +129,13 @@ class Policy(nn.Module):
     """
     Actor-Critic module 
     """
+
     def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None):
         super(Policy, self).__init__()
-        
+
         if base_kwargs is None:
             base_kwargs = {}
-        
+
         if len(obs_shape) == 3:
             if arch == 'small':
                 base = SmallNetBase
@@ -184,6 +192,7 @@ class NNBase(nn.Module):
     """
     Actor-Critic network (base class)
     """
+
     def __init__(self, recurrent, recurrent_input_size, hidden_size):
         super(NNBase, self).__init__()
 
@@ -230,11 +239,11 @@ class NNBase(nn.Module):
 
             # Let's figure out which steps in the sequence have a zero for any agent
             # We will always assume t=0 has a zero in it as that makes the logic cleaner
-            has_zeros = ((masks[1:] == 0.0) \
-                            .any(dim=-1)
-                            .nonzero()
-                            .squeeze()
-                            .cpu())
+            has_zeros = ((masks[1:] == 0.0)
+                         .any(dim=-1)
+                         .nonzero()
+                         .squeeze()
+                         .cpu())
 
             # +1 to correct the masks[1:]
             if has_zeros.dim() == 0:
@@ -274,6 +283,7 @@ class MLPBase(NNBase):
     """
     Multi-Layer Perceptron
     """
+
     def __init__(self, num_inputs, recurrent=False, hidden_size=64):
         super(MLPBase, self).__init__(recurrent, num_inputs, hidden_size)
 
@@ -308,12 +318,15 @@ class BasicBlock(nn.Module):
     """
     Residual Network Block
     """
+
     def __init__(self, n_channels, stride=1):
         super(BasicBlock, self).__init__()
 
-        self.conv1 = Conv2d_tf(n_channels, n_channels, kernel_size=3, stride=1, padding=(1,1))
+        self.conv1 = Conv2d_tf(n_channels, n_channels,
+                               kernel_size=3, stride=1, padding=(1, 1))
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = Conv2d_tf(n_channels, n_channels, kernel_size=3, stride=1, padding=(1,1))
+        self.conv2 = Conv2d_tf(n_channels, n_channels,
+                               kernel_size=3, stride=1, padding=(1, 1))
         self.stride = stride
 
         apply_init_(self.modules())
@@ -336,7 +349,8 @@ class ResNetBase(NNBase):
     """
     Residual Network 
     """
-    def __init__(self, num_inputs, recurrent=False, hidden_size=256, channels=[16,32,32]):
+
+    def __init__(self, num_inputs, recurrent=False, hidden_size=256, channels=[16, 32, 32]):
         super(ResNetBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         self.layer1 = self._make_layer(num_inputs, channels[0])
@@ -356,7 +370,8 @@ class ResNetBase(NNBase):
     def _make_layer(self, in_channels, out_channels, stride=1):
         layers = []
 
-        layers.append(Conv2d_tf(in_channels, out_channels, kernel_size=3, stride=1))
+        layers.append(Conv2d_tf(in_channels, out_channels,
+                      kernel_size=3, stride=1))
         layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
 
         layers.append(BasicBlock(out_channels))
@@ -384,6 +399,7 @@ class SmallNetBase(NNBase):
     """
     Residual Network 
     """
+
     def __init__(self, num_inputs, recurrent=False, hidden_size=256):
         super(SmallNetBase, self).__init__(recurrent, num_inputs, hidden_size)
 
@@ -418,6 +434,7 @@ class MinigridPolicy(nn.Module):
     """
     Actor-Critic module 
     """
+
     def __init__(self, obs_shape, num_actions, arch='small', base_kwargs=None, vin=False, num_iterations=10, wandb=False, sigmoid=False, dynamics=False):
         super(MinigridPolicy, self).__init__()
 
@@ -430,10 +447,10 @@ class MinigridPolicy(nn.Module):
         if self.wandb:
             self.image_log_freq = 1024
             self.image_log_i = 0
-        
+
         if base_kwargs is None:
             base_kwargs = {}
-        
+
         self.final_channels = 32 if arch == 'small' else 64
 
         self.image_conv = nn.Sequential(
@@ -466,38 +483,51 @@ class MinigridPolicy(nn.Module):
         self.critic_embedding_shape = tuple(zeros_out.shape[1:])
 
         if self.vin:
-            self.image_embedding_size = self.critic_embedding_shape[1] * self.critic_embedding_shape[2] * self.final_channels
-            if True:
-                self.actor_embedding_size = num_actions
-            else:
-                self.actor_embedding_size = 1 + self.image_embedding_size * self.final_channels
+            self.image_embedding_size = self.critic_embedding_shape[1] * \
+                self.critic_embedding_shape[2] * self.final_channels
+            self.actor_embedding_size = num_actions
         else:
-            self.image_embedding_size = self.critic_embedding_shape[1] * self.critic_embedding_shape[2] * self.final_channels
-            self.actor_embedding_size = self.image_embedding_shape[1] * self.image_embedding_shape[2] * self.final_channels
+            self.image_embedding_size = self.critic_embedding_shape[1] * \
+                self.critic_embedding_shape[2] * self.final_channels
+            self.actor_embedding_size = self.image_embedding_shape[1] * \
+                self.image_embedding_shape[2] * self.final_channels
 
         # Define VIN
         if self.vin:
             self.h = nn.Sequential(
-                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(
+                    3, 3), stride=1, padding=1),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), stride=1, padding=1),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(
+                    3, 3), stride=1, padding=1),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=self.final_channels, out_channels=150, kernel_size=(3, 3), stride=1, padding=1),
+                nn.Conv2d(in_channels=self.final_channels, out_channels=150,
+                          kernel_size=(3, 3), stride=1, padding=1),
                 nn.ReLU(),
             )
 
-            self.r = nn.Conv2d(in_channels=150, out_channels=1, kernel_size=(1, 1), stride=1, padding=0, bias=False)
-            self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
+            self.r = nn.Conv2d(in_channels=150, out_channels=1, kernel_size=(
+                1, 1), stride=1, padding=0, bias=False)
+            self.q = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(
+                3, 3), stride=1, padding=1, bias=False)
 
-            self.p_condensor = nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
-            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(3, 3), stride=1, padding=1, bias=False)
+            self.p_condensor = nn.Conv2d(
+                in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
+            self.p = nn.Conv2d(in_channels=1, out_channels=num_actions, kernel_size=(
+                3, 3), stride=1, padding=1, bias=False)
 
-            self.critic_attention = nn.Sequential(
-                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), padding=1),
+            self.done_generator = nn.Conv2d(
+                in_channels=150, out_channels=1, kernel_size=(3, 3), stride=1, padding=1)
+
+            self.vin_attention = nn.Sequential(
+                nn.Conv2d(in_channels=self.final_channels,
+                          out_channels=self.final_channels, kernel_size=(3, 3), padding=1),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=self.final_channels, out_channels=self.final_channels, kernel_size=(3, 3), padding=1),
+                nn.Conv2d(in_channels=self.final_channels,
+                          out_channels=self.final_channels, kernel_size=(3, 3), padding=1),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=self.final_channels, out_channels=1, kernel_size=(3, 3), padding=1),
+                nn.Conv2d(in_channels=self.final_channels,
+                          out_channels=1, kernel_size=(3, 3), padding=1),
             )
 
         # Define actor's model
@@ -537,195 +567,143 @@ class MinigridPolicy(nn.Module):
         return fig
 
     def act(self, inputs, rnn_hxs, masks, deterministic=False):
-        x = inputs
-        img_out = self.image_conv(x)
-        img_out_critic = self.image_conv_critic(x)
-        img_out_actor = img_out
-        x = img_out.flatten(1, -1)
-        x_actor = img_out_actor.flatten(1, -1)
-        x_critic = img_out_critic.flatten(1, -1)
-
+        value = self.get_value(inputs, rnn_hxs, masks)
         if self.vin:
-            out_value_rep, out_reward, out_q, transition_info = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
-
-            if True:
-                critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
-            else:
-                critic_attention = self.critic_attention(img_out)
-                critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-            assert(out_value_rep.shape == critic_attention.shape)
-            weighted_out_value_rep = out_value_rep * critic_attention
-            # value_in = weighted_out_value_rep.flatten(1, -1)
-            # value = value_in.sum(dim=1, keepdim=True)
-            value = self.critic(x_critic)
-
-            q = out_q * critic_attention
-            q = q.sum(dim=[2, 3])
-            if True:
-                # actor_in = torch.cat([x_actor, q.detach()], dim=1)
-                # actor_in = q.detach()
-                actor_in = q
-                dist = FixedCategorical(logits=actor_in)
-            else:
-                assert value.shape[1] == 1
-                actor_in = torch.cat([x_actor, value.detach()], dim=1)
-                assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
-
+            dist = self.compute_dist_vin(inputs, rnn_hxs, masks)
         else:
-            value_in = x_critic
-            actor_in = x_actor
-            value = self.critic(value_in)
-            actor_features = self.actor_base(actor_in)
-            dist = self.dist(actor_features)
+            dist = self.dist(self.actor_base(actor_in))
 
         if deterministic:
             action = dist.mode()
         else:
             action = dist.sample()
 
-        # action_log_probs = dist.log_probs(action)
         action_log_dist = dist.logits
         dist_entropy = dist.entropy().mean()
 
         return value, action, action_log_dist, rnn_hxs
 
     def get_value(self, inputs, rnn_hxs, masks):
-        x = inputs
-        x = self.image_conv_critic(x)
+        x = self.image_conv_critic(inputs)
         x = x.flatten(1, -1)
         out = self.critic(x)
 
         return out
 
-    def get_value_vin(self, representation, num_iterations, inputs):
+    def compute_vin(self, representation, num_iterations, inputs):
         h = self.h(representation)
         if False:
             r = self.r(h)
         else:
             r = (inputs[:, 0, :, :] == 8).unsqueeze(1).float() - 0.1
-            # r[(inputs[:, 0, :, :] == 2).unsqueeze(1)] = -0.5
-        q = self.q(r)
+        if True:
+            done_grid = (inputs[:, 0, :, :] != 8).unsqueeze(1).float()
+        else:
+            done_grid = torch.sigmoid(self.done_generator(h))
+        q = self.softmax_p_conv(r)
         v, _ = torch.max(q, dim=1, keepdim=True)
 
-        r_img = self.q(r)
+        r_img = self.softmax_p_conv(r)
         transition_info = self.p_condensor(representation)
         if self.sigmoid:
             transition_info = torch.sigmoid(transition_info)
         qt = torch.empty_like(r_img)
 
-        if False:
-            print("AAAAAAAAAAAAAA")
-            with profiler.profile(record_shapes=True, profile_memory=True, use_cuda=True) as prof:
-                with profiler.record_function("agent update"):
-                    for i in range(num_iterations - 1):
-                        q = self.eval_q(r_img, v, transition_info, qt)
-                        v, _ = torch.max(q, dim=1, keepdim=True)
-            print(prof.key_averages().table(sort_by='cuda_memory_usage'))
-            assert False
-        else:
-            for i in range(num_iterations - 1):
-                q = self.eval_q(r_img, v, transition_info, qt)
-                v, _ = torch.max(q, dim=1, keepdim=True)
+        for i in range(num_iterations - 1):
+            q = self.eval_q(r_img, v, transition_info, qt)
+            v, _ = torch.max(q, dim=1, keepdim=True)
+            v *= done_grid
 
-        return v, r, q, transition_info
+        return v, r, q, transition_info, done_grid
+
+    def softmax_p_conv(self, x, stride=1, padding=1):
+        p_softmaxed = F.softmax(self.p.weight.view(
+            self.p.weight.shape[0], self.p.weight.shape[1], -1), dim=2).view_as(self.p.weight)
+        assert (p_softmaxed >= 0.).all() and (p_softmaxed <= 1.).all() and (
+            p_softmaxed.sum(dim=[2, 3]).isclose(torch.tensor(1.))).all()
+
+        return F.conv2d(x, p_softmaxed, stride=stride, padding=padding)
 
     def eval_q(self, r_img, v, transition_info, qt):
-        # Get reward image
-        # qt = torch.empty_like(r_img)
-
-        # Get qt-image
-        # for row in range(self.state_shape[0]):
-        #     for col in range(self.state_shape[1]):
-        #         trans_window_row_start = self.trans_window_row_starts[row]
-        #         trans_window_row_end = self.trans_window_row_ends[row]
-        #         trans_window_col_start = self.trans_window_col_starts[col]
-        #         trans_window_col_end = self.trans_window_col_ends[col]
-
-        #         rep_window_row_start = self.rep_window_row_starts[row]
-        #         rep_window_row_end = self.rep_window_row_ends[row]
-        #         rep_window_col_start = self.rep_window_col_starts[col]
-        #         rep_window_col_end = self.rep_window_col_ends[col]
-
-        #         print(self.p.shape, transition_info.shape)
-        #         assert False
-        #         transition_window = self.p[:, :, rep_window_row_start:rep_window_row_end, rep_window_col_start:rep_window_col_end] * transition_info[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]
-        #         transition_window = F.softmax(transition_window.view(transition_window.shape[0], transition_window.shape[1], -1), dim=2).view_as(transition_window)
-
-        #         qt[:, :, row, col] = (transition_window * v[:, :, trans_window_row_start:trans_window_row_end, trans_window_col_start:trans_window_col_end]).sum([2, 3])
         assert (v * transition_info).shape == v.shape == transition_info.shape
         if self.dynamics:
-            qt = self.p(v * transition_info)
+            qt = self.softmax_p_conv(v * transition_info)
         else:
-            qt = self.p(v)
+            qt = self.softmax_p_conv(v)
 
         # Sum q-transition and reward image
         q = r_img + qt
 
         return q
 
-        # return F.conv2d(
-        #     torch.cat([r, v], 1),
-        #     torch.cat([self.q.weight, self.w], 1),
-        #     stride=1,
-        #     padding=1)
+    def evaluate_actions(self, inputs: torch.Tensor, rnn_hxs: torch.Tensor, masks: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Generates the log probability of each action, entropy of the action distribution, and value of the current state
 
+        Args:
+            inputs (torch.Tensor): Observation
+            rnn_hxs (torch.Tensor): Previous RNN States
+            masks (torch.Tensor): Related to RNN States
+            action (torch.Tensor): The action taken
 
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action):
-        x = inputs
-        img_out = self.image_conv(x)
-        img_out_critic = self.image_conv_critic(x)
-        # img_out_actor = self.image_conv_actor(x)
-        img_out_actor = img_out
-        x = img_out.flatten(1, -1)
-        x_actor = img_out_actor.flatten(1, -1)
-        x_critic = img_out_critic.flatten(1, -1)
-
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: Value, log probability, entropy, rnn states
+        """
+        value = self.get_value(inputs, rnn_hxs, masks)
 
         if self.vin:
-            out_value_rep, out_reward, out_q, transition_info = self.get_value_vin(img_out, num_iterations=self.num_iterations, inputs=inputs)
-
-            if True:
-                critic_attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
-            else:
-                critic_attention = self.critic_attention(img_out)
-                critic_attention = F.softmax(critic_attention.view(critic_attention.shape[0], critic_attention.shape[1], -1), dim=2).view_as(critic_attention)
-            # out_value_rep *= critic_attention
-
-            # value_in = out_value_rep.flatten(1, -1)
-            # value = value_in.sum(dim=1, keepdim=True)
-            value = self.critic(x_critic)
-            q = out_q * critic_attention
-            q = q.sum(dim=[2, 3])
-            if True:
-                # actor_in = torch.cat([x_actor, q.detach()], dim=1)
-                # actor_in = q.detach()
-                actor_in = q
-                dist = FixedCategorical(logits=actor_in)
-            else:
-                assert value.shape[1] == 1
-                actor_in = torch.cat([x_actor, value.detach()], dim=1)
-                assert actor_in.shape[1] == 1 + self.image_embedding_size * self.final_channels
-
-            if self.wandb:
-                if self.image_log_i % self.image_log_freq == 0:
-                    inputs_img = wandb.Image(inputs[0])
-                    critic_attention_img = self.make_image(critic_attention[0])
-                    out_value_rep_img = self.make_image(out_value_rep[0])
-                    out_reward_img = self.make_image(out_reward[0])
-                    transition_info_img = self.make_image(transition_info[0])
-                    p_img = px.imshow(self.p.weight[0, 0, :, :].detach().cpu().numpy())
-                    wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img, "reward": out_reward_img, 'transition_info': transition_info_img, "self.p": p_img})
-                self.image_log_i += 1
-
+            dist = self.compute_dist_vin(inputs, rnn_hxs, masks)
         else:
-            value_in = x_critic
-            actor_in = x_actor
-            value = self.critic(value_in)
-
-            actor_features = self.actor_base(actor_in)
+            actor_features = self.actor_base(self.image_conv(inputs))
             dist = self.dist(actor_features)
 
         action_log_probs = dist.log_probs(action)
         dist_entropy = dist.entropy().mean()
 
         return value, action_log_probs, dist_entropy, rnn_hxs
+
+
+    def compute_dist_vin(self, inputs: torch.Tensor, rnn_hxs: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
+        """Computes the distribution over actions using Value Iteration Network
+
+        Args:
+            inputs (torch.Tensor): The input observation
+            rnn_hxs (torch.Tensor): Any previous rnn state (if it exists)
+            masks (torch.Tensor): Related to RNN state
+
+        Returns:
+            torch.Tensor: The categorical distributions over actions generated from the q-values
+        """
+
+        x = self.image_conv(inputs)
+        value_grid, reward_grid, q_grid, transition_info, done_grid = self.compute_vin(x, self.num_iterations, inputs)
+
+        HARDCODED_ATTENTION = True
+        if HARDCODED_ATTENTION:
+            attention = (inputs[:, 0, :, :] == 10).unsqueeze(1).float()
+        else:
+            attention = self.vin_attention(x)
+
+        # (Soft)select the current state by multiplying by the attention and then sum
+        q_state = (q_grid * attention).sum(dim=[2, 3])
+
+        # Transform the Q values into a distribution over actions
+        dist = FixedCategorical(logits=q_state)
+
+        # WANDB logging of visualizations
+        if self.wandb:
+            if self.image_log_i % self.image_log_freq == 0:
+                inputs_img = wandb.Image(inputs[0])
+                critic_attention_img = self.make_image(attention[0])
+                out_value_rep_img = self.make_image(value_grid[0])
+                out_reward_img = self.make_image(reward_grid[0])
+                transition_info_img = self.make_image(transition_info[0])
+                done_grid_img = self.make_image(done_grid[0])
+                p_softmaxed = F.softmax(self.p.weight.view(
+                    self.p.weight.shape[0], self.p.weight.shape[1], -1), dim=2).view_as(self.p.weight)
+                p_img = px.imshow(
+                    p_softmaxed[0, 0, :, :].detach().cpu().numpy())
+                wandb.log({"inputs": inputs_img, "critic_attention": critic_attention_img, "out_value_rep": out_value_rep_img,
+                            "reward": out_reward_img, 'transition_info': transition_info_img, "self.p": p_img, "done_grid": done_grid_img})
+            self.image_log_i += 1
+
+        return dist

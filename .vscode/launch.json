@@ -9,7 +9,7 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
-            "args": ["--env_name", "MiniGrid-Empty-8x8-v0", "--num_processes=64", "--level_replay_strategy=random", "--level_replay_score_transform=rank", "--level_replay_temperature=0.1", "--staleness_coef=0.1", "--log_interval=10", "--log_dir=../vin_logs/done-debug", "--num_env_steps=1000000", "--num_train_seeds=500", "--use_vin", "--vin_num_iterations=10", "--wandb"],
+            "args": ["--env_name", "MiniGrid-Empty-8x8-v0", "--num_processes=64", "--level_replay_strategy=random", "--level_replay_score_transform=rank", "--level_replay_temperature=0.1", "--staleness_coef=0.1", "--log_interval=10", "--log_dir=../vin_logs/done-debug", "--num_env_steps=1000000", "--num_train_seeds=500", "--use_vin", "--vin_num_iterations=10", "--use_dynamics", "--sigmoid_dynamics", "--wandb"],
             "console": "integratedTerminal"
         }
     ]
